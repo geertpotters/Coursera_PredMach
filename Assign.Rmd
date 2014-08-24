@@ -1,0 +1,162 @@
+#Predicting underachieving physical activity
+
+###author: Geert Potters
+###Sunday, August 24, 2014
+
+
+##Introduction
+Now that personal activity meters are available for a fair price, it has become possible to have a direct follow-up of body posture, body and limb movement, and, consequently, the way physical exercises are performed. In this study, we investigate the possibility of having an automatic correcting system for people doing weightlifting exercises. As described in the original publication (Ugulino et al. 2012), this study is based on measurements on six young health participants, who were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Measurements were taken of the concomitant body positions for each of these fashions. 
+
+The idea is, to use subsequent measurements to correct the posture of people doing these exercises, based on their own measurements.
+
+##Data Processing
+###Preparatory actions
+The first step consists of loading the necessary packages and setting the seed. 
+
+```{r,warning=FALSE}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(rattle)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(randomForest)
+library(xtable)
+set.seed(32323)
+```
+
+
+###Data (pre)processing
+The data files (with the training data and with the official test data) were downloaded and stored in the working directory. In this report, only the training data will be used; the test data are meant for the second part of the assignment. They will be unpacked and processed in this chunk of code:
+
+```{r}
+train<-read.csv("pml-training.csv", header=TRUE)
+attach(train)
+
+train2<-cbind(train[,c(grep("^roll", colnames(train)), 
+                       grep("^pitch", colnames(train)),
+                       grep("^yaw", colnames(train)))], classe)
+train3<-train[, -c(1:7, grep("^kurtosis", colnames(train)),
+                   grep("^skew", colnames(train)),
+                   grep("^max", colnames(train)),
+                   grep("^min", colnames(train)),
+                   grep("^var", colnames(train)),
+                   grep("^avg", colnames(train)),
+                   grep("^stdd", colnames(train)),
+                   grep("^ampli", colnames(train)))]
+```
+
+As you can see, two training sets were originally conceived. The first (train2) originated from an analysis of the question: what are the mistakes people make while doing their exercises, and what would be logical parameters to "betray" these wrong moves? 
+The second set (train3) started from the data themselves: in order to absorb as much information as possible, a summary of the data was studied, and all variables which consisted (mostly) of NA's were taken out. 
+There is a clear difference in the number of variables retained in train2 (12, plus the outcome "classe") and the number in train3 (52, plus the outcome "classe").
+
+Of course, to validate the model, we need to slice up our training set so that we have the opportunity to run our own tests (and obtain an estimate of the out of sample error) before attempting to classify the items in the test set. 
+
+```{r}
+train2chunk<-createDataPartition(train2$classe, p=0.8, list=FALSE)
+train2train<-train2[train2chunk, ]
+train2test<-train2[-train2chunk, ]
+train3chunk<-createDataPartition(train3$classe, p=0.8, list=FALSE)
+train3train<-train3[-train3chunk, ]
+train3test<-train3[-train3chunk, ]
+```
+
+##RPART Classification
+The outcome variable (classe, indicating which mistake has been made during the exercise), is a factor variable with 5 levels. As such, regression models are not suitable (they should be used for continuous outcome variables); instead, we are to rely on classification methods (clustering/hierarchical trees). R offers different options, of which we will explore two.
+
+First, we use the rpart method. Three covalidation methods were defined, as follows: 
+```{r}
+tC1<-trainControl(method="cv", number=10)
+tC2<-trainControl(method="repeatedcv", number=10, repeats=3)
+tC3<-trainControl(method="boot", number=50)
+```
+
+And so we arrive at the following six ways to train our models.
+
+```{r}
+RPARTmodel2A<-train(train2train$classe~., data=train2train, 
+                    method="rpart", trControl=tC1)
+RPARTmodel2B<-train(train2train$classe~., data=train2train, 
+                    method="rpart", trControl=tC2)
+RPARTmodel2C<-train(train2train$classe~., data=train2train, 
+                    method="rpart", trControl=tC3)
+RPARTmodel3A<-train(train3train$classe~., data=train3train, 
+                    method="rpart", trControl=tC1)
+RPARTmodel3B<-train(train3train$classe~., data=train3train, 
+                    method="rpart", trControl=tC2)
+RPARTmodel3C<-train(train3train$classe~., data=train3train, 
+                    method="rpart", trControl=tC3)
+```
+
+Next, we test the models with the data we separated in the beginning, and we note the accuracy of these models.
+
+```{r, results='asis', warning=FALSE}
+testRPART2A<-predict(RPARTmodel2A, train2test[,1:12])
+cfm2A<-confusionMatrix(train2test[,13], testRPART2A)
+testRPART2B<-predict(RPARTmodel2A, train2test[,1:12])
+cfm2B<-confusionMatrix(train2test[,13], testRPART2B)
+testRPART2C<-predict(RPARTmodel2A, train2test[,1:12])
+cfm2C<-confusionMatrix(train2test[,13], testRPART2C)
+
+testRPART3A<-predict(RPARTmodel3A, train3test[,1:52])
+cfm3A<-confusionMatrix(train3test[,53], testRPART3A)
+testRPART3B<-predict(RPARTmodel3B, train3test[,1:52])
+cfm3B<-confusionMatrix(train3test[,53], testRPART3B)
+testRPART3C<-predict(RPARTmodel3C, train3test[,1:52])
+cfm3C<-confusionMatrix(train3test[,53], testRPART3C)
+
+accurtable<-cbind(c("model 2A","model 2B","model 2C","model 3A","model 3B","model 3C"), 
+                  c(cfm2A$overall[1],cfm2B$overall[1],cfm2C$overall[1],
+                    cfm3A$overall[1],cfm3B$overall[1],cfm3C$overall[1]))
+print(xtable(accurtable), type="html")
+```
+
+We can plot, by way of illustration, a few trees: 
+```{r}
+par(mfrow=c(1,2))
+fancyRpartPlot(RPARTmodel2A$finalModel)
+fancyRpartPlot(RPARTmodel3A$finalModel)
+par(mfrow=c(1,1))
+```
+
+### Conclusions for rpart modelling
+We have to conclude:
+1/ The different methods for crossvalidation did not have any effect, as the accuracy values obtained with the small set train2 are consistently `r cfm2A$overall[1]`, and those with the larger set train3 equally consistently `r cfm3A$overall[1]`.
+2/ Classification with Rpart as method is not good enough. 
+
+##RandomForest classification
+
+Subsequently, the randomForest classification method (from the randomForest package) was used to improve the results. 
+
+```{r cache=TRUE}
+RFmodel2<-randomForest(classe~., data=train2train, importance=T, proximity = T)
+testRF2<-predict(RFmodel2, train2test[,1:12])
+cfmRF2<-confusionMatrix(train2test[,13], testRF2)
+
+RFmodel3<-randomForest(classe~., data=train3train, importance=T, proximity = T)
+testRF3<-predict(RFmodel3, train3test[,1:52])
+cfmRF3<-confusionMatrix(train3test[,53], testRF3)
+```
+
+We can plot the improvement of the accuracy here as well:
+```{r}
+par(mfrow=c(1,2))
+plot(RFmodel2)
+plot(RFmodel3)
+par(mfrow=c(1,1))
+```
+
+### Conclusions for RF modelling
+The model based on the 12 variables (train2) has an accuracy of `r cfmRF2$overall[1]*100`%, while the model incorporating the 52 variables (train3) is `r cfmRF3$overall[1]*100`% accurate. However, the second model requires a much longer computing time, which is unacceptable in the light of this small improvement. Model RFmodel2 is therefore deemed most useful. 
+
+This ends our analysis. 
+
+##Addendum
+
+The model RFModel2 performed well in the final assessment of the test data (part two of this assignment). 
+
+##Reference
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+
